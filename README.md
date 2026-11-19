@@ -6,6 +6,8 @@ Built for when Adobe's own uninstallers fail, or leave folders behind that refus
 
 > [!WARNING]
 > This removes **all** Adobe software, including **Acrobat Reader**. Your `Creative Cloud Files` sync folder is never touched. Every registry change is backed up first.
+>
+> Adobe folders are deleted whole. **Third-party plug-ins installed inside them** (for example into `Adobe\Common\Plug-ins` or an application's `Plug-ins` folder) are deleted with them and are not backed up. Registry records of registered non-Adobe products are left alone. Run `-DryRun` first to see which folders would be deleted.
 
 ## Quick start
 
@@ -145,7 +147,7 @@ Use at your own risk. adobe-nuke force-removes software, files and registry entr
 
 ## Suomeksi
 
-adobe-nuke poistaa Windowsista kaiken Adoben: ohjelmat, palvelut, ajastetut tehtävät, taustaprosessit, Resurssienhallinnan lisäosat, kansiot, pikakuvakkeet, Adobe PDF ‑tulostimen, palomuurisäännöt, rekisterimerkinnät ja välimuistit. Myös Acrobat Reader poistuu. `Creative Cloud Files` ‑kansioon ei kosketa.
+adobe-nuke poistaa Windowsista kaiken Adoben: ohjelmat, palvelut, ajastetut tehtävät, taustaprosessit, Resurssienhallinnan lisäosat, kansiot, pikakuvakkeet, Adobe PDF ‑tulostimen, palomuurisäännöt, rekisterimerkinnät ja välimuistit. Myös Acrobat Reader poistuu. Adoben kansiot poistetaan kokonaisina, joten niiden sisään asennetut kolmannen osapuolen lisäosat (plug-init) poistuvat samalla. `Creative Cloud Files` ‑kansioon ei kosketa.
 
 **Käyttö:** avaa PowerShell ja liitä:
 
