@@ -23,7 +23,7 @@
     are still in use at the end are moved to a quarantine folder on the same
     drive and deleted at the next restart.
 
-    Every registry key is exported to a backup folder on the Desktop before it is
+    Every registry key is exported to a backup folder in Documents before it is
     changed, and a full log is written there too.
 
     EVERYTHING from Adobe is removed, including Acrobat Reader. The user's
@@ -70,7 +70,7 @@ param(
     [switch]$PauseAtEnd
 )
 
-$ScriptVersion = '1.2.3'
+$ScriptVersion = '1.2.4'
 $ScriptUrl = 'https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1'
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -436,9 +436,9 @@ if ($DryRun) { Write-Host 'DRY RUN: nothing will be changed.' -ForegroundColor D
 $script:Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 if (-not $DryRun) {
-    $desktop = [Environment]::GetFolderPath('Desktop')
-    if (-not $desktop -or -not (Test-Path -LiteralPath $desktop)) { $desktop = $env:USERPROFILE }
-    $script:WorkDir = Join-Path $desktop "adobe-nuke-$script:Stamp"
+    $docs = [Environment]::GetFolderPath('MyDocuments')
+    if (-not $docs -or -not (Test-Path -LiteralPath $docs)) { $docs = $env:USERPROFILE }
+    $script:WorkDir = Join-Path $docs "adobe-nuke-$script:Stamp"
     $script:RegBackupDir = Join-Path $script:WorkDir 'registry-backup'
     $script:RegLog = Join-Path $script:WorkDir 'registry-changes.txt'
     New-Item -ItemType Directory -Path $script:RegBackupDir -Force | Out-Null

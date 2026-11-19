@@ -114,7 +114,7 @@ With the downloaded files: `.\adobe-nuke.ps1 -DryRun` or `adobe-nuke.cmd -DryRun
 
 ## Log and backup
 
-Every real run creates `adobe-nuke-<date>` on your Desktop with:
+Every real run creates `adobe-nuke-<date>` in your Documents folder with:
 
 - `log.txt`: full transcript of the run
 - `registry-changes.txt`: every registry key and value that was removed
@@ -157,4 +157,4 @@ irm https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1 | iex
 
 Skripti pyytää järjestelmänvalvojan oikeudet, näyttää löydetyt kohteet ja odottaa vahvistusta (`k` tai `y`) ennen kuin muuttaa mitään. Vaihtoehtoisesti lataa zip, pura se ja tuplaklikkaa `adobe-nuke.cmd`.
 
-Loki, luettelo rekisterimuutoksista ja rekisterin varmuuskopio tallentuvat työpöydälle kansioon `adobe-nuke-<päiväys>`.
+Loki, luettelo rekisterimuutoksista ja rekisterin varmuuskopio tallentuvat Tiedostot-kansioon (Documents) kansioon `adobe-nuke-<päiväys>`.
