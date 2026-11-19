@@ -1022,7 +1022,10 @@ $unregistered = 0
 foreach ($dll in $shellDlls) {
     if (-not (Test-ShouldProcess $dll 'Unregister shell extension (Explorer is restarted afterwards)')) { continue }
     & regsvr32.exe /u /s $dll 2>&1 | Out-Null
-    Write-Done "unregistered $dll"
+    # Not an error: many of these DLLs have no unregister entry point (exit 4) or
+    # cannot load any more (exit 3). The folder and registry steps remove them anyway.
+    if ($LASTEXITCODE -eq 0) { Write-Done "unregistered $dll" }
+    else { Write-Item "NOTE    $dll did not unregister (regsvr32 exit $LASTEXITCODE), continuing" 'Yellow' }
     $unregistered++
 }
 if (-not $shellDlls.Count) { Write-Item 'none' }
