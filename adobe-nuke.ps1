@@ -70,7 +70,7 @@ param(
     [switch]$PauseAtEnd
 )
 
-$ScriptVersion = '1.2.0'
+$ScriptVersion = '1.2.1'
 $ScriptUrl = 'https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1'
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -666,27 +666,32 @@ if (-not $SkipRegistry) {
     $compCodes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($pc in $packedCodes) { [void]$compCodes.Add($pc) }
     $notAdobe = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $zeroCode = '0' * 32
     $compData = New-Object System.Collections.Generic.List[object]
     foreach ($ck in Get-RegSubKeys 'HKLM' $compBase) {
         $k = Open-RegKey 'HKLM' "$compBase\$ck"
         if (-not $k) { continue }
         try {
             $names = $k.GetValueNames()
+            $zeroAdobe = $false
             foreach ($n in $names) {
                 if (-not $n -or $compCodes.Contains($n) -or $notAdobe.Contains($n)) { continue }
                 if (Test-AdobePath ([string]$k.GetValue($n))) {
+                    # The all-zero code marks a permanent component of ANY product. It is
+                    # not a product, so it is judged per value and never learned as a code.
+                    if ($n -eq $zeroCode) { $zeroAdobe = $true; continue }
                     $pn = Get-RegString 'HKLM' "SOFTWARE\Classes\Installer\Products\$n" 'ProductName'
                     if (-not $pn -or $pn -match '^Adobe|Acrobat') { [void]$compCodes.Add($n) } else { [void]$notAdobe.Add($n) }
                 }
             }
-            $compData.Add([pscustomobject]@{ Key = $ck; Names = $names; Subs = $k.GetSubKeyNames() })
+            $compData.Add([pscustomobject]@{ Key = $ck; Names = $names; Subs = $k.GetSubKeyNames(); ZeroAdobe = $zeroAdobe })
         } catch { } finally { $k.Close() }
     }
     foreach ($c in $compData) {
-        $hits = @($c.Names | Where-Object { $_ -and $compCodes.Contains($_) })
+        $hits = @($c.Names | Where-Object { $_ -and ($compCodes.Contains($_) -or ($c.ZeroAdobe -and $_ -eq $zeroCode)) })
         $hitSubs = @($c.Subs | Where-Object { $compCodes.Contains($_) })
         if (-not ($hits.Count + $hitSubs.Count)) { continue }
-        $others = @($c.Names | Where-Object { $_ -and -not $compCodes.Contains($_) })
+        $others = @($c.Names | Where-Object { $_ -and $hits -notcontains $_ })
         $otherSubs = @($c.Subs | Where-Object { -not $compCodes.Contains($_) })
         if (-not ($others.Count + $otherSubs.Count)) {
             Add-RegTarget 'Installer components' 'HKLM' "$compBase\$($c.Key)"
