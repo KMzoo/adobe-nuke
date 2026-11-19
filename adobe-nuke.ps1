@@ -70,7 +70,7 @@ param(
     [switch]$PauseAtEnd
 )
 
-$ScriptVersion = '1.2.1'
+$ScriptVersion = '1.2.2'
 $ScriptUrl = 'https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1'
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -265,12 +265,20 @@ function Get-RegExportText([string]$Hive, [string]$Path, [string]$ValueName, [sw
             $label = if ($n) { '"' + (ConvertTo-RegString $n) + '"' } else { '@' }
             $line = $null
             switch ($kind.ToString()) {
-                'String'       { $line = "$label=`"" + (ConvertTo-RegString ([string]$raw)) + '"' }
+                'String'       {
+                    # reg.exe import drops quoted strings that contain a line break
+                    if ([string]$raw -match '[\r\n]') { $line = "$label=hex(1):" + (ConvertTo-RegHex ([Text.Encoding]::Unicode.GetBytes([string]$raw + [char]0))) }
+                    else { $line = "$label=`"" + (ConvertTo-RegString ([string]$raw)) + '"' }
+                }
                 'DWord'        { $line = "$label=dword:" + [BitConverter]::ToUInt32([BitConverter]::GetBytes([int32]$raw), 0).ToString('x8') }
                 'QWord'        { $line = "$label=hex(b):" + (ConvertTo-RegHex ([BitConverter]::GetBytes([int64]$raw))) }
                 'ExpandString' { $line = "$label=hex(2):" + (ConvertTo-RegHex ([Text.Encoding]::Unicode.GetBytes([string]$raw + [char]0))) }
-                'MultiString'  { $line = "$label=hex(7):" + (ConvertTo-RegHex ([Text.Encoding]::Unicode.GetBytes((@($raw) -join [char]0) + [char]0 + [char]0))) }
+                'MultiString'  {
+                    $multi = if (@($raw).Count) { (@($raw) -join [char]0) + [char]0 + [char]0 } else { [string][char]0 }
+                    $line = "$label=hex(7):" + (ConvertTo-RegHex ([Text.Encoding]::Unicode.GetBytes($multi)))
+                }
                 'Binary'       { $line = "$label=hex:" + (ConvertTo-RegHex ([byte[]]$raw)) }
+                'None'         { $line = "$label=hex(0):" + (ConvertTo-RegHex ([byte[]]$raw)) }
             }
             if ($line) { [void]$sb.AppendLine($line) }
         }
@@ -1099,7 +1107,8 @@ if (-not $SkipRegistry) {
 Write-Host ''
 if ($DryRun) {
     if ($script:DryRunLines.Count) {
-        $listFile = Join-Path $env:TEMP 'adobe-nuke-dryrun-registry.txt'
+        # The name must not start with "adobe": the temp cleanup would list it.
+        $listFile = Join-Path $env:TEMP 'dryrun-adobe-nuke-registry.txt'
         [IO.File]::WriteAllLines($listFile, $script:DryRunLines)
         Write-Host "Full list of registry entries: $listFile" -ForegroundColor DarkYellow
     }
