@@ -70,7 +70,7 @@ param(
     [switch]$PauseAtEnd
 )
 
-$ScriptVersion = '1.2.2'
+$ScriptVersion = '1.2.3'
 $ScriptUrl = 'https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1'
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -982,10 +982,17 @@ if ($pdfParts) {
         try { Remove-Printer -Name $pr.Name -ErrorAction Stop; Write-Done "printer $($pr.Name)" }
         catch { Write-Fail "printer $($pr.Name): $($_.Exception.Message)" }
     }
+    # Ports of the Adobe port monitor cannot be removed one by one: they disappear
+    # with the monitor. A failure here is only final if the port is still there
+    # after the monitor has been removed.
+    $pendingPorts = @()
     foreach ($pp in $printerPorts) {
         if ($DryRun) { Write-Would "remove port $($pp.Name)"; continue }
         try { Remove-PrinterPort -Name $pp.Name -ErrorAction Stop; Write-Done "port $($pp.Name)" }
-        catch { Write-Fail "port $($pp.Name): $($_.Exception.Message)" }
+        catch {
+            if ($printMonitors.Count) { $pendingPorts += [pscustomobject]@{ Name = $pp.Name; Message = $_.Exception.Message } }
+            else { Write-Fail "port $($pp.Name): $($_.Exception.Message)" }
+        }
     }
     foreach ($d in $printerDrivers) {
         if ($DryRun) { Write-Would "remove driver $($d.Name)"; continue }
@@ -1012,6 +1019,14 @@ if ($pdfParts) {
                 }
             }
             Start-Service -Name Spooler -ErrorAction SilentlyContinue
+            if ($pendingPorts.Count) {
+                $portsNow = $null
+                try { $portsNow = @(Get-PrinterPort -ErrorAction Stop | ForEach-Object { $_.Name }) } catch { }
+                foreach ($pp in $pendingPorts) {
+                    if ($null -ne $portsNow -and $portsNow -notcontains $pp.Name) { Write-Done "port $($pp.Name) (removed with its port monitor)" }
+                    else { Write-Fail "port $($pp.Name): $($pp.Message)" }
+                }
+            }
         }
     }
 }
