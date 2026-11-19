@@ -7,7 +7,7 @@ Built for when Adobe's own uninstallers fail, or leave folders behind that refus
 > [!WARNING]
 > This removes **all** Adobe software, including **Acrobat Reader**. Your `Creative Cloud Files` sync folder is never touched. Every registry change is backed up first.
 >
-> Adobe folders are deleted whole. **Third-party plug-ins installed inside them** (for example into `Adobe\Common\Plug-ins` or an application's `Plug-ins` folder) are deleted with them and are not backed up. Registry records of registered non-Adobe products are left alone. Run `-DryRun` first to see which folders would be deleted.
+> Adobe folders are deleted whole. **Third-party plug-ins installed inside them** (for example into `Adobe\Common\Plug-ins` or an application's `Plug-ins` folder) are deleted with them and are not backed up. Registry records of registered non-Adobe products are left alone. Run with `-WhatIf` first to see which folders would be deleted.
 
 ## Quick start
 
@@ -22,7 +22,7 @@ It asks for administrator rights, shows everything it found, and waits for your 
 **See first, change nothing:**
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1))) -DryRun
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1))) -WhatIf
 ```
 
 **Adobe programs still installed?** Let the official uninstallers run first, then clean up what they leave:
@@ -105,14 +105,16 @@ A machine with several Creative Cloud versions installed can easily have **thous
 
 | Parameter | Effect |
 |---|---|
-| `-DryRun` (alias `-WhatIf`) | Lists everything that would be removed. Nothing is changed. The full registry list is saved to `%TEMP%\dryrun-adobe-nuke-registry.txt`. |
+| `-WhatIf` | Lists everything that would be removed. Nothing is changed. Implemented with `SupportsShouldProcess`: every step that changes the system, including the direct .NET registry calls and the native tools, is behind a `ShouldProcess` check. The full registry list is saved to `%TEMP%\dryrun-adobe-nuke-registry.txt`. |
+| `-Confirm` | Asks before each single step (each service, folder, shortcut, firewall rule, and each registry category). |
+| `-DryRun` | Same as `-WhatIf`. Kept so that older instructions still work. |
 | `-UninstallFirst` | Runs Adobe's own uninstallers before the force cleanup. Creative Cloud apps may open their own uninstaller window. |
-| `-Force` | No confirmation prompts. |
+| `-Force` | Skips the "Continue? (y/n)" questions. Does not switch off `-Confirm`. |
 | `-SkipRegistry` | Leaves the registry and firewall rules untouched. |
 | `-SkipCache` | Leaves the installer cache, temp files and prefetch untouched. |
 | `-IncludeDocuments` | Also deletes the `Adobe` folder in each user's Documents folder. It is left alone by default because it can hold your own presets, libraries and auto-saved projects. |
 
-With the downloaded files: `.\adobe-nuke.ps1 -DryRun` or `adobe-nuke.cmd -DryRun`.
+With the downloaded files: `.\adobe-nuke.ps1 -WhatIf` or `adobe-nuke.cmd -WhatIf`.
 
 ## Log and backup
 
@@ -139,7 +141,7 @@ Every real run creates `adobe-nuke-<date>` in your Documents folder with:
 
 ## Disclaimer
 
-Use at your own risk. adobe-nuke force-removes software, files and registry entries. Run `-DryRun` first if you are unsure. Not affiliated with Adobe.
+Use at your own risk. adobe-nuke force-removes software, files and registry entries. Run with `-WhatIf` first if you are unsure. Not affiliated with Adobe.
 
 ## License
 
@@ -159,6 +161,6 @@ irm https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1 | iex
 
 Skripti pyytää järjestelmänvalvojan oikeudet, näyttää löydetyt kohteet ja odottaa vahvistusta (`k` tai `y`) ennen kuin muuttaa mitään. Vaihtoehtoisesti lataa zip, pura se ja tuplaklikkaa `adobe-nuke.cmd`.
 
-Kokeile ensin valitsimella `-DryRun`: se näyttää kaiken, mitä poistettaisiin, eikä muuta mitään. Tiedostot-kansion (Documents) `Adobe`-kansio jätetään rauhaan, ellei anneta valitsinta `-IncludeDocuments`.
+Kokeile ensin valitsimella `-WhatIf`: se näyttää kaiken, mitä poistettaisiin, eikä muuta mitään. Tiedostot-kansion (Documents) `Adobe`-kansio jätetään rauhaan, ellei anneta valitsinta `-IncludeDocuments`.
 
 Loki, luettelo rekisterimuutoksista ja rekisterin varmuuskopio tallentuvat Tiedostot-kansion (Documents) alikansioon `adobe-nuke-<päiväys>`.

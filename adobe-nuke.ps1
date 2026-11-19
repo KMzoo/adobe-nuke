@@ -31,12 +31,19 @@
 
     Project page: https://github.com/KMzoo/adobe-nuke
 
+.PARAMETER WhatIf
+    Show what would be removed without changing anything. Every step that
+    changes the system goes through ShouldProcess, including the direct .NET
+    registry calls and the native tools.
+
+.PARAMETER Confirm
+    Ask before each single step (service, folder, registry category...).
+
 .PARAMETER DryRun
-    Show what would be removed without changing anything. -WhatIf is an alias
-    for this switch.
+    Same as -WhatIf. Kept for older instructions.
 
 .PARAMETER Force
-    Skip the confirmation prompts.
+    Skip the "Continue? (y/n)" questions. Does not switch off -Confirm.
 
 .PARAMETER UninstallFirst
     Run the official Adobe uninstallers before the force cleanup. MSI products
@@ -58,7 +65,7 @@
     irm https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1 | iex
 
 .EXAMPLE
-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1))) -DryRun
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1))) -WhatIf
 
 .EXAMPLE
     .\adobe-nuke.ps1 -UninstallFirst
@@ -67,8 +74,9 @@
     Requires Windows 10/11 and Windows PowerShell 5.1 or PowerShell 7.
     Asks for administrator rights automatically.
 #>
+[CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [Alias('WhatIf')][switch]$DryRun,
+    [switch]$DryRun,
     [switch]$Force,
     [switch]$UninstallFirst,
     [switch]$SkipRegistry,
@@ -77,7 +85,7 @@ param(
     [switch]$PauseAtEnd
 )
 
-$ScriptVersion = '1.2.6'
+$ScriptVersion = '1.3.0'
 $ScriptUrl = 'https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1'
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -86,14 +94,35 @@ $ProgressPreference = 'SilentlyContinue'
 # Output helpers
 # ===========================================================================
 $script:Errors = 0
+$script:Skipped = 0
 $script:RebootNeeded = $false
 $script:WorkDir = $null
+
+# -WhatIf / -Confirm. $PSCmdlet is missing only when the script text is run with
+# "irm | iex", where no parameters can be passed anyway.
+$script:Cmdlet = $PSCmdlet
+if ($DryRun) { $WhatIfPreference = $true }
+$script:WhatIf = [bool]$WhatIfPreference
+$script:ConfirmBound = [bool]($PSCmdlet -and $PSCmdlet.MyInvocation.BoundParameters.ContainsKey('Confirm') -and $PSCmdlet.MyInvocation.BoundParameters['Confirm'])
 
 function Write-Step([string]$Text) { Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
 function Write-Item([string]$Text, [string]$Color = 'Gray') { Write-Host "   $Text" -ForegroundColor $Color }
 function Write-Done([string]$Text)  { Write-Item "OK      $Text" 'Green' }
 function Write-Fail([string]$Text)  { Write-Item "FAILED  $Text" 'Red'; $script:Errors++ }
-function Write-Would([string]$Text) { Write-Item "WOULD   $Text" 'DarkYellow' }
+
+# The single gate in front of every change. Cmdlets honor -WhatIf by themselves,
+# but direct .NET calls (registry, MoveFileEx) and native tools (sc, regsvr32,
+# takeown, icacls, robocopy, msiexec) do not, so each of them sits behind this.
+function Test-ShouldProcess([string]$Target, [string]$Action) {
+    if ($script:Cmdlet) {
+        $go = $script:Cmdlet.ShouldProcess($Target, $Action)
+    } else {
+        $go = -not $script:WhatIf
+        if (-not $go) { Write-Host ('What if: Performing the operation "{0}" on target "{1}".' -f $Action, $Target) }
+    }
+    if (-not $go -and -not $script:WhatIf) { $script:Skipped++ }
+    return $go
+}
 
 # Ends the run without "exit", which would close the whole window when the script
 # was started with "irm ... | iex". Caught at the very bottom of the file.
@@ -109,9 +138,11 @@ function Request-Elevation {
     Write-Host 'Requesting administrator rights...' -ForegroundColor Yellow
     $exe = (Get-Process -Id $PID).Path
     $switches = @('-PauseAtEnd')
-    foreach ($sw in 'DryRun', 'Force', 'UninstallFirst', 'SkipRegistry', 'SkipCache', 'IncludeDocuments') {
+    foreach ($sw in 'Force', 'UninstallFirst', 'SkipRegistry', 'SkipCache', 'IncludeDocuments') {
         if ((Get-Variable -Name $sw -ValueOnly -ErrorAction SilentlyContinue)) { $switches += "-$sw" }
     }
+    if ($script:WhatIf) { $switches += '-WhatIf' }
+    if ($script:ConfirmBound) { $switches += '-Confirm' }
     if ($PSCommandPath) {
         $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"") + $switches
     } else {
@@ -121,6 +152,12 @@ function Request-Elevation {
         $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $enc)
     }
     try {
+        # In PowerShell 7 Start-Process honors -WhatIf and would not start anything.
+        # The relaunch changes nothing on the system, and the elevated window gets
+        # -WhatIf / -Confirm passed on. (Windows PowerShell 5.1 has no -WhatIf on
+        # Start-Process, so the preference is switched off for this scope instead.)
+        $WhatIfPreference = $false
+        $ConfirmPreference = 'None'
         Start-Process -FilePath $exe -Verb RunAs -ArgumentList $argList -ErrorAction Stop
         Write-Host 'Continuing in the new administrator window.' -ForegroundColor Gray
     } catch {
@@ -129,7 +166,7 @@ function Request-Elevation {
 }
 
 function Confirm-Continue([string]$Question) {
-    if ($DryRun -or $Force) { return $true }
+    if ($script:WhatIf -or $Force) { return $true }
     $answer = Read-Host "$Question (y/n)"
     return ($answer -match '^\s*[yYjJkKoOsS]')
 }
@@ -430,7 +467,11 @@ function Get-AdobeUninstallEntries {
 # ===========================================================================
 function Invoke-AdobeNuke {
 
-$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+# Every change asks Test-ShouldProcess first (that is where -Confirm prompts).
+# Once a step is approved, the cmdlets inside it must not ask a second time.
+$ConfirmPreference = 'None'
+
+$principal =New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Request-Elevation
     Exit-Script
@@ -438,11 +479,11 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 Write-Host ''
 Write-Host "adobe-nuke $ScriptVersion" -ForegroundColor White
-if ($DryRun) { Write-Host 'DRY RUN: nothing will be changed.' -ForegroundColor DarkYellow }
+if ($script:WhatIf) { Write-Host 'DRY RUN: nothing will be changed.' -ForegroundColor DarkYellow }
 
 $script:Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
-if (-not $DryRun) {
+if (-not $script:WhatIf) {
     $docs = [Environment]::GetFolderPath('MyDocuments')
     if (-not $docs -or -not (Test-Path -LiteralPath $docs)) { $docs = $env:USERPROFILE }
     $script:WorkDir = Join-Path $docs "adobe-nuke-$script:Stamp"
@@ -478,7 +519,7 @@ if ($UninstallFirst) {
         if (-not (Confirm-Continue 'Run these uninstallers now?')) { Stop-Cancelled }
 
         foreach ($e in $entries) {
-            if ($DryRun) { Write-Would "uninstall $($e.DisplayName)"; continue }
+            if (-not (Test-ShouldProcess $e.DisplayName 'Run the official uninstaller')) { continue }
             if ($e.IsMsi) {
                 Write-Item "Uninstalling $($e.DisplayName)..."
                 $p = Start-Process msiexec.exe -ArgumentList "/x $($e.Id) /qn /norestart" -PassThru -Wait
@@ -497,7 +538,7 @@ if ($UninstallFirst) {
                 else { Write-Item "TIMEOUT $($e.DisplayName) still running after 30 min, continuing" 'Yellow' }
             }
         }
-        if (-not $DryRun) { Start-Sleep -Seconds 5 }
+        if (-not $script:WhatIf) { Start-Sleep -Seconds 5 }
     }
 }
 
@@ -506,6 +547,10 @@ if ($UninstallFirst) {
 # ===========================================================================
 Write-Host ''
 Write-Host 'Scanning (the registry scan can take a minute)...' -ForegroundColor Gray
+
+# The scan only reads. With -WhatIf left on, the modules it auto-loads would
+# print a "What if: Set Alias" line for each of their aliases.
+$WhatIfPreference = $false
 
 $profiles = @(Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
     Where-Object { -not $_.Special -and $_.LocalPath -and (Test-Path -LiteralPath $_.LocalPath) } |
@@ -880,10 +925,12 @@ if (-not $SkipRegistry) {
     }
 }
 
+$WhatIfPreference = $script:WhatIf   # back on before anything can change
+
 # ===========================================================================
 # Plan
 # ===========================================================================
-$total = $folders.Count + $services.Count + $tasks.Count + $processes.Count + $shellDlls.Count + $shortcuts.Count +
+$total =$folders.Count + $services.Count + $tasks.Count + $processes.Count + $shellDlls.Count + $shortcuts.Count +
          $pdfParts + $script:RegTargets.Count + $fwRules.Count + $cacheFiles.Count + $cacheDirs.Count
 
 if ($total -eq 0) {
@@ -921,7 +968,7 @@ Write-Item 'Folders:'
 foreach ($f in $folders) { Write-Item "  $f" }
 if (-not $folders.Count) { Write-Item '  none' }
 
-if (-not $DryRun -and -not $Force) {
+if (-not $script:WhatIf -and -not $Force) {
     Write-Host ''
     Write-Host 'This removes ALL Adobe software, including Acrobat Reader.' -ForegroundColor Yellow
     Write-Host 'Your "Creative Cloud Files" folder is not touched.' -ForegroundColor Yellow
@@ -933,7 +980,7 @@ if (-not $DryRun -and -not $Force) {
 # ===========================================================================
 Write-Step 'Services'
 foreach ($s in $services) {
-    if ($DryRun) { Write-Would "stop and delete service $($s.Name)"; continue }
+    if (-not (Test-ShouldProcess "service $($s.Name)" 'Stop and delete')) { continue }
     Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue
     Set-Service -Name $s.Name -StartupType Disabled -ErrorAction SilentlyContinue
     if ($s.ProcessId) { Stop-Process -Id $s.ProcessId -Force -ErrorAction SilentlyContinue }
@@ -948,7 +995,7 @@ if (-not $services.Count) { Write-Item 'none' }
 # ===========================================================================
 Write-Step 'Scheduled tasks'
 foreach ($t in $tasks) {
-    if ($DryRun) { Write-Would "delete task $($t.TaskPath)$($t.TaskName)"; continue }
+    if (-not (Test-ShouldProcess "scheduled task $($t.TaskPath)$($t.TaskName)" 'Delete')) { continue }
     try {
         Unregister-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -Confirm:$false -ErrorAction Stop
         Write-Done "task $($t.TaskName)"
@@ -961,7 +1008,7 @@ if (-not $tasks.Count) { Write-Item 'none' }
 # ===========================================================================
 Write-Step 'Processes'
 foreach ($p in $processes) {
-    if ($DryRun) { Write-Would "stop $($p.ProcessName) ($($p.Id))"; continue }
+    if (-not (Test-ShouldProcess "process $($p.ProcessName) ($($p.Id))" 'Stop')) { continue }
     try { Stop-Process -Id $p.Id -Force -ErrorAction Stop; Write-Done "$($p.ProcessName) ($($p.Id))" }
     catch { if (Get-Process -Id $p.Id -ErrorAction SilentlyContinue) { Write-Fail "$($p.ProcessName): $($_.Exception.Message)" } }
 }
@@ -971,13 +1018,15 @@ if (-not $processes.Count) { Write-Item 'none' }
 # 4. Shell extensions + Explorer restart
 # ===========================================================================
 Write-Step 'Shell extensions'
+$unregistered = 0
 foreach ($dll in $shellDlls) {
-    if ($DryRun) { Write-Would "unregister $dll"; continue }
+    if (-not (Test-ShouldProcess $dll 'Unregister shell extension (Explorer is restarted afterwards)')) { continue }
     & regsvr32.exe /u /s $dll 2>&1 | Out-Null
     Write-Done "unregistered $dll"
+    $unregistered++
 }
 if (-not $shellDlls.Count) { Write-Item 'none' }
-elseif (-not $DryRun) {
+elseif ($unregistered) {
     Write-Item 'Restarting Explorer (the taskbar will blink)...'
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3
@@ -991,7 +1040,7 @@ elseif (-not $DryRun) {
 if ($pdfParts) {
     Write-Step 'Adobe PDF printer'
     foreach ($pr in $printers) {
-        if ($DryRun) { Write-Would "remove printer $($pr.Name)"; continue }
+        if (-not (Test-ShouldProcess "printer $($pr.Name)" 'Remove')) { continue }
         try { Remove-Printer -Name $pr.Name -ErrorAction Stop; Write-Done "printer $($pr.Name)" }
         catch { Write-Fail "printer $($pr.Name): $($_.Exception.Message)" }
     }
@@ -1000,7 +1049,7 @@ if ($pdfParts) {
     # after the monitor has been removed.
     $pendingPorts = @()
     foreach ($pp in $printerPorts) {
-        if ($DryRun) { Write-Would "remove port $($pp.Name)"; continue }
+        if (-not (Test-ShouldProcess "printer port $($pp.Name)" 'Remove')) { continue }
         try { Remove-PrinterPort -Name $pp.Name -ErrorAction Stop; Write-Done "port $($pp.Name)" }
         catch {
             if ($printMonitors.Count) { $pendingPorts += [pscustomobject]@{ Name = $pp.Name; Message = $_.Exception.Message } }
@@ -1008,18 +1057,17 @@ if ($pdfParts) {
         }
     }
     foreach ($d in $printerDrivers) {
-        if ($DryRun) { Write-Would "remove driver $($d.Name)"; continue }
+        if (-not (Test-ShouldProcess "printer driver $($d.Name)" 'Remove')) { continue }
         try { Remove-PrinterDriver -Name $d.Name -ErrorAction Stop; Write-Done "driver $($d.Name)" }
         catch { Write-Fail "driver $($d.Name): $($_.Exception.Message)" }
     }
     if ($printMonitors.Count) {
-        if ($DryRun) {
-            foreach ($m in $printMonitors) { Write-Would "remove port monitor $($m.Name)" }
-        } else {
+        $monitorsToRemove = @($printMonitors | Where-Object { Test-ShouldProcess "port monitor $($_.Name)" 'Remove (the print spooler is restarted)' })
+        if ($monitorsToRemove.Count) {
             # A port monitor is loaded by the spooler, so it is removed with the spooler stopped
             Write-Item 'Stopping the print spooler for a moment...'
             Stop-Service -Name Spooler -Force -ErrorAction SilentlyContinue
-            foreach ($m in $printMonitors) {
+            foreach ($m in $monitorsToRemove) {
                 $t = [pscustomobject]@{ Category = 'Print monitors'; Hive = 'HKLM'; Path = $m.Path; ValueName = ''; IsValue = $false
                                         Name = "HKEY_LOCAL_MACHINE\$($m.Path)" }
                 if (Invoke-RegTarget $t) { Write-Done "port monitor $($m.Name)" } else { Write-Fail "port monitor $($m.Name)" }
@@ -1032,13 +1080,13 @@ if ($pdfParts) {
                 }
             }
             Start-Service -Name Spooler -ErrorAction SilentlyContinue
-            if ($pendingPorts.Count) {
-                $portsNow = $null
-                try { $portsNow = @(Get-PrinterPort -ErrorAction Stop | ForEach-Object { $_.Name }) } catch { }
-                foreach ($pp in $pendingPorts) {
-                    if ($null -ne $portsNow -and $portsNow -notcontains $pp.Name) { Write-Done "port $($pp.Name) (removed with its port monitor)" }
-                    else { Write-Fail "port $($pp.Name): $($pp.Message)" }
-                }
+        }
+        if ($pendingPorts.Count) {
+            $portsNow = $null
+            try { $portsNow = @(Get-PrinterPort -ErrorAction Stop | ForEach-Object { $_.Name }) } catch { }
+            foreach ($pp in $pendingPorts) {
+                if ($null -ne $portsNow -and $portsNow -notcontains $pp.Name) { Write-Done "port $($pp.Name) (removed with its port monitor)" }
+                else { Write-Fail "port $($pp.Name): $($pp.Message)" }
             }
         }
     }
@@ -1048,9 +1096,9 @@ if ($pdfParts) {
 # 6. Folders
 # ===========================================================================
 Write-Step 'Folders'
-if (-not $DryRun -and $folders.Count) { $script:YesLetter = Get-TakeownYesLetter }
+if (-not $script:WhatIf -and $folders.Count) { $script:YesLetter = Get-TakeownYesLetter }
 foreach ($f in $folders) {
-    if ($DryRun) { Write-Would "delete $f"; continue }
+    if (-not (Test-ShouldProcess $f 'Delete folder with everything in it')) { continue }
     Remove-FolderHard $f
 }
 if (-not $folders.Count) { Write-Item 'none' }
@@ -1060,15 +1108,19 @@ if (-not $folders.Count) { Write-Item 'none' }
 # ===========================================================================
 Write-Step 'Shortcuts'
 foreach ($s in $shortcuts) {
-    if ($DryRun) { Write-Would "delete $($s.FullName)"; continue }
+    if (-not (Test-ShouldProcess $s.FullName 'Delete shortcut')) { continue }
     try { Remove-Item -LiteralPath $s.FullName -Force -ErrorAction Stop; Write-Done $s.FullName }
     catch { Write-Fail "$($s.FullName): $($_.Exception.Message)" }
 }
-if (-not $DryRun) {
+if (-not $script:WhatIf) {
     foreach ($r in $shortcutRoots) {
         Get-ChildItem -LiteralPath $r -Directory -Force -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match '^(Adobe|Acrobat)' -and -not (Get-ChildItem -LiteralPath $_.FullName -Recurse -Force -File -ErrorAction SilentlyContinue) } |
-            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+            ForEach-Object {
+                if (Test-ShouldProcess $_.FullName 'Delete empty shortcut folder') {
+                    Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
     }
 }
 if (-not $shortcuts.Count) { Write-Item 'none' }
@@ -1078,23 +1130,22 @@ if (-not $shortcuts.Count) { Write-Item 'none' }
 # ===========================================================================
 if (-not $SkipCache) {
     Write-Step 'Caches'
-    if ($DryRun) {
-        foreach ($c in $cacheFiles) { Write-Would "delete $c" }
-        foreach ($d in $cacheDirs)  { Write-Would "delete $d" }
-    } else {
-        $okCount = 0; $laterCount = 0
-        foreach ($c in $cacheFiles) {
-            try { Remove-Item -LiteralPath $c -Force -ErrorAction Stop; $okCount++ }
-            catch { if (Register-DeleteOnReboot $c) { $laterCount++ } }
-        }
-        foreach ($d in $cacheDirs) {
-            Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
-            if (Test-Path -LiteralPath $d) { if (Register-DeleteOnReboot $d) { $laterCount++ } } else { $okCount++ }
-        }
+    $okCount = 0; $laterCount = 0
+    foreach ($c in $cacheFiles) {
+        if (-not (Test-ShouldProcess $c 'Delete cached file')) { continue }
+        try { Remove-Item -LiteralPath $c -Force -ErrorAction Stop; $okCount++ }
+        catch { if (Register-DeleteOnReboot $c) { $laterCount++ } }
+    }
+    foreach ($d in $cacheDirs) {
+        if (-not (Test-ShouldProcess $d 'Delete cache folder')) { continue }
+        Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $d) { if (Register-DeleteOnReboot $d) { $laterCount++ } } else { $okCount++ }
+    }
+    if (-not ($cacheFiles.Count + $cacheDirs.Count)) { Write-Item 'none' }
+    elseif (-not $script:WhatIf) {
         Write-Done ("{0} items removed, {1} freed" -f $okCount, (Format-Size $cacheBytes))
         if ($laterCount) { Write-Item "REBOOT  $laterCount items in use, deleted at next restart" 'Yellow' }
     }
-    if (-not ($cacheFiles.Count + $cacheDirs.Count)) { Write-Item 'none' }
 }
 
 # ===========================================================================
@@ -1103,7 +1154,7 @@ if (-not $SkipCache) {
 if (-not $SkipRegistry) {
     Write-Step 'Firewall rules'
     foreach ($r in $fwRules) {
-        if ($DryRun) { Write-Would "remove rule '$($r.DisplayName)'"; continue }
+        if (-not (Test-ShouldProcess "firewall rule '$($r.DisplayName)'" 'Remove')) { continue }
         try { Remove-NetFirewallRule -Name $r.Name -ErrorAction Stop; Write-Done "rule '$($r.DisplayName)'" }
         catch { Write-Fail "rule '$($r.DisplayName)': $($_.Exception.Message)" }
     }
@@ -1112,16 +1163,18 @@ if (-not $SkipRegistry) {
     Write-Step 'Registry'
     if (-not $script:RegTargets.Count) { Write-Item 'none' }
     foreach ($g in ($script:RegTargets | Group-Object Category)) {
-        if ($DryRun) {
+        # One decision per category: thousands of single prompts would be useless.
+        $go = Test-ShouldProcess ("{0} registry entries: {1}" -f $g.Count, $g.Name) 'Back up and delete'
+        if ($script:WhatIf) {
             $shown = 0
             foreach ($t in $g.Group) {
                 $label = if ($t.IsValue) { "$($t.Name) [$(if ($t.ValueName) { $t.ValueName } else { '(default)' })]" } else { $t.Name }
                 $script:DryRunLines.Add("$($g.Name)`t$label")
-                if ($shown -lt 10) { Write-Would "delete $label"; $shown++ }
+                if ($shown -lt 10) { Write-Item "        $label" 'DarkYellow'; $shown++ }
             }
             if ($g.Count -gt 10) { Write-Item ("        ... and {0} more {1}" -f ($g.Count - 10), $g.Name) 'DarkYellow' }
-            continue
         }
+        if (-not $go) { continue }
         $ok = 0; $bad = 0
         foreach ($t in $g.Group) { if (Invoke-RegTarget $t) { $ok++ } else { $bad++ } }
         if ($bad) { Write-Fail ("{0}: {1} removed, {2} failed (see registry-changes.txt)" -f $g.Name, $ok, $bad) }
@@ -1133,17 +1186,19 @@ if (-not $SkipRegistry) {
 # Summary
 # ===========================================================================
 Write-Host ''
-if ($DryRun) {
+if ($script:WhatIf) {
     if ($script:DryRunLines.Count) {
         # The name must not start with "adobe": the temp cleanup would list it.
         $listFile = Join-Path $env:TEMP 'dryrun-adobe-nuke-registry.txt'
         [IO.File]::WriteAllLines($listFile, $script:DryRunLines)
         Write-Host "Full list of registry entries: $listFile" -ForegroundColor DarkYellow
     }
-    Write-Host 'Dry run finished. Run again without -DryRun to remove everything listed above.' -ForegroundColor DarkYellow
+    Write-Host 'Dry run finished. Run again without -WhatIf to remove everything listed above.' -ForegroundColor DarkYellow
 } else {
     $left = @($folders | Where-Object { Test-Path -LiteralPath $_ })
-    if ($script:Errors -eq 0 -and $left.Count -eq 0 -and -not $script:RebootNeeded) {
+    if ($script:Skipped) {
+        Write-Host "Finished. $($script:Skipped) step(s) were skipped at the confirmation prompt, $($script:Errors) error(s)." -ForegroundColor Yellow
+    } elseif ($script:Errors -eq 0 -and $left.Count -eq 0 -and -not $script:RebootNeeded) {
         Write-Host 'Done. All Adobe leftovers were removed.' -ForegroundColor Green
     } elseif ($script:RebootNeeded) {
         Write-Host 'Done. A few files were still in use: restart Windows to finish.' -ForegroundColor Yellow
