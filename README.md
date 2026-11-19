@@ -2,7 +2,7 @@
 
 Removes Adobe software from Windows **completely**: the programs, their services and background processes, the Explorer shell extensions that keep folders locked, thousands of leftover registry entries, cached installer packages and temp files.
 
-Built for when Adobe's own uninstallers fail, or leave folders behind that refuse to be deleted ("file is in use", "access denied"), even with tools like SUPERDelete or Adobe's Creative Cloud Cleaner Tool.
+Built for when Adobe's own uninstallers fail, or leave folders behind that refuse to be deleted ("file is in use", "access denied"). In my own experience, the various removal and file deletion tools I tried did not get rid of them.
 
 > [!WARNING]
 > This removes **all** Adobe software, including **Acrobat Reader**. Your `Creative Cloud Files` sync folder is never touched. Every registry change is backed up first.
