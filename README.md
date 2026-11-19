@@ -77,6 +77,7 @@ Files that are *still* in use after all that are moved to a quarantine folder on
 - `C:\Program Files\Common Files\Adobe` and `C:\Program Files (x86)\Common Files\Adobe`
 - `C:\ProgramData\Adobe`
 - `AppData\Roaming\Adobe`, `AppData\Local\Adobe`, `AppData\LocalLow\Adobe` for every user profile
+- `Documents\Adobe` for every user profile, **only with `-IncludeDocuments`**
 
 `AppData\Roaming\Adobe` holds app settings and presets. Copy anything you want to keep before running.
 
@@ -158,4 +159,6 @@ irm https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1 | iex
 
 Skripti pyytää järjestelmänvalvojan oikeudet, näyttää löydetyt kohteet ja odottaa vahvistusta (`k` tai `y`) ennen kuin muuttaa mitään. Vaihtoehtoisesti lataa zip, pura se ja tuplaklikkaa `adobe-nuke.cmd`.
 
-Loki, luettelo rekisterimuutoksista ja rekisterin varmuuskopio tallentuvat Tiedostot-kansioon (Documents) kansioon `adobe-nuke-<päiväys>`.
+Kokeile ensin valitsimella `-DryRun`: se näyttää kaiken, mitä poistettaisiin, eikä muuta mitään. Tiedostot-kansion (Documents) `Adobe`-kansio jätetään rauhaan, ellei anneta valitsinta `-IncludeDocuments`.
+
+Loki, luettelo rekisterimuutoksista ja rekisterin varmuuskopio tallentuvat Tiedostot-kansion (Documents) alikansioon `adobe-nuke-<päiväys>`.
