@@ -105,7 +105,7 @@ A machine with several Creative Cloud versions installed can easily have **thous
 
 | Parameter | Effect |
 |---|---|
-| `-DryRun` | Lists everything that would be removed. Nothing is changed. The full registry list is saved to `%TEMP%\dryrun-adobe-nuke-registry.txt`. |
+| `-DryRun` (alias `-WhatIf`) | Lists everything that would be removed. Nothing is changed. The full registry list is saved to `%TEMP%\dryrun-adobe-nuke-registry.txt`. |
 | `-UninstallFirst` | Runs Adobe's own uninstallers before the force cleanup. Creative Cloud apps may open their own uninstaller window. |
 | `-Force` | No confirmation prompts. |
 | `-SkipRegistry` | Leaves the registry and firewall rules untouched. |

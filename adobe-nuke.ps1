@@ -32,7 +32,8 @@
     Project page: https://github.com/KMzoo/adobe-nuke
 
 .PARAMETER DryRun
-    Show what would be removed without changing anything.
+    Show what would be removed without changing anything. -WhatIf is an alias
+    for this switch.
 
 .PARAMETER Force
     Skip the confirmation prompts.
@@ -67,7 +68,7 @@
     Asks for administrator rights automatically.
 #>
 param(
-    [switch]$DryRun,
+    [Alias('WhatIf')][switch]$DryRun,
     [switch]$Force,
     [switch]$UninstallFirst,
     [switch]$SkipRegistry,
@@ -76,7 +77,7 @@ param(
     [switch]$PauseAtEnd
 )
 
-$ScriptVersion = '1.2.5'
+$ScriptVersion = '1.2.6'
 $ScriptUrl = 'https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1'
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
