@@ -109,6 +109,7 @@ A machine with several Creative Cloud versions installed can easily have **thous
 | `-Force` | No confirmation prompts. |
 | `-SkipRegistry` | Leaves the registry and firewall rules untouched. |
 | `-SkipCache` | Leaves the installer cache, temp files and prefetch untouched. |
+| `-IncludeDocuments` | Also deletes the `Adobe` folder in each user's Documents folder. It is left alone by default because it can hold your own presets, libraries and auto-saved projects. |
 
 With the downloaded files: `.\adobe-nuke.ps1 -DryRun` or `adobe-nuke.cmd -DryRun`.
 

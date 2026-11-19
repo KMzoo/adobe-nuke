@@ -48,6 +48,11 @@
 .PARAMETER SkipCache
     Leave the Windows Installer cache, temp files and prefetch alone.
 
+.PARAMETER IncludeDocuments
+    Also delete the "Adobe" folder in each user's Documents folder. It holds
+    settings and presets, but can also hold your own presets, libraries and
+    auto-saved projects, so it is left alone unless you ask for it.
+
 .EXAMPLE
     irm https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1 | iex
 
@@ -67,10 +72,11 @@ param(
     [switch]$UninstallFirst,
     [switch]$SkipRegistry,
     [switch]$SkipCache,
+    [switch]$IncludeDocuments,
     [switch]$PauseAtEnd
 )
 
-$ScriptVersion = '1.2.4'
+$ScriptVersion = '1.2.5'
 $ScriptUrl = 'https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1'
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -102,7 +108,7 @@ function Request-Elevation {
     Write-Host 'Requesting administrator rights...' -ForegroundColor Yellow
     $exe = (Get-Process -Id $PID).Path
     $switches = @('-PauseAtEnd')
-    foreach ($sw in 'DryRun', 'Force', 'UninstallFirst', 'SkipRegistry', 'SkipCache') {
+    foreach ($sw in 'DryRun', 'Force', 'UninstallFirst', 'SkipRegistry', 'SkipCache', 'IncludeDocuments') {
         if ((Get-Variable -Name $sw -ValueOnly -ErrorAction SilentlyContinue)) { $switches += "-$sw" }
     }
     if ($PSCommandPath) {
@@ -516,6 +522,12 @@ foreach ($p in $profiles) {
     $candidates.Add((Join-Path $p 'AppData\Roaming\Adobe'))
     $candidates.Add((Join-Path $p 'AppData\Local\Adobe'))
     $candidates.Add((Join-Path $p 'AppData\LocalLow\Adobe'))
+    if ($IncludeDocuments) { $candidates.Add((Join-Path $p 'Documents\Adobe')) }
+}
+if ($IncludeDocuments) {
+    # The current user's Documents folder may be redirected (OneDrive, another drive)
+    $myDocs = [Environment]::GetFolderPath('MyDocuments')
+    if ($myDocs) { $candidates.Add((Join-Path $myDocs 'Adobe')) }
 }
 $folders = @($candidates | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ })
 
