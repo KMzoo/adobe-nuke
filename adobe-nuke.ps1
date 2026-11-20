@@ -85,7 +85,7 @@ param(
     [switch]$PauseAtEnd
 )
 
-$ScriptVersion = '1.3.1'
+$ScriptVersion = '1.3.2'
 $ScriptUrl = 'https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1'
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -122,6 +122,22 @@ function Test-ShouldProcess([string]$Target, [string]$Action) {
     }
     if (-not $go -and -not $script:WhatIf) { $script:Skipped++ }
     return $go
+}
+
+# Runs a native tool and returns its exit code, or $null when it did not finish in time.
+# In that case the tool and its child processes are stopped. Needed for regsvr32: a DLL
+# that fails while loading can show its own error window (seen: "R6034" from the C runtime
+# of an old 32-bit DLL), which "/s" does not suppress and which would block the run until
+# somebody clicks OK. For a 32-bit DLL the window belongs to a child process (SysWOW64).
+function Invoke-NativeWithTimeout([string]$File, [string]$Arguments, [int]$Seconds) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $File
+    $psi.Arguments = $Arguments
+    $psi.UseShellExecute = $false
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if ($proc.WaitForExit($Seconds * 1000)) { return $proc.ExitCode }
+    & taskkill.exe /PID $proc.Id /T /F 2>&1 | Out-Null
+    return $null
 }
 
 # Ends the run without "exit", which would close the whole window when the script
@@ -1051,11 +1067,13 @@ Write-Step 'Shell extensions'
 $unregistered = 0
 foreach ($dll in $shellDlls) {
     if (-not (Test-ShouldProcess $dll 'Unregister shell extension (Explorer is restarted afterwards)')) { continue }
-    & regsvr32.exe /u /s $dll 2>&1 | Out-Null
-    # Not an error: many of these DLLs have no unregister entry point (exit 4) or
-    # cannot load any more (exit 3). The folder and registry steps remove them anyway.
-    if ($LASTEXITCODE -eq 0) { Write-Done "unregistered $dll" }
-    else { Write-Item "NOTE    $dll did not unregister (regsvr32 exit $LASTEXITCODE), continuing" 'Yellow' }
+    $code = Invoke-NativeWithTimeout 'regsvr32.exe' ('/u /s "{0}"' -f $dll) 15
+    # Not an error: many of these DLLs have no unregister entry point (exit 4), cannot
+    # load any more (exit 3) or show an error window of their own (stopped after 15
+    # seconds). The folder and registry steps remove them anyway.
+    if ($code -eq 0) { Write-Done "unregistered $dll" }
+    elseif ($null -eq $code) { Write-Item "NOTE    $dll did not unregister (regsvr32 did not finish in 15 seconds and was stopped), continuing" 'Yellow' }
+    else { Write-Item "NOTE    $dll did not unregister (regsvr32 exit $code), continuing" 'Yellow' }
     $unregistered++
 }
 if (-not $shellDlls.Count) { Write-Item 'none' }
