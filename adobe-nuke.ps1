@@ -85,7 +85,7 @@ param(
     [switch]$PauseAtEnd
 )
 
-$ScriptVersion = '1.3.0'
+$ScriptVersion = '1.3.1'
 $ScriptUrl = 'https://raw.githubusercontent.com/KMzoo/adobe-nuke/main/adobe-nuke.ps1'
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -378,11 +378,33 @@ function Invoke-RegTarget($T) {
 # ===========================================================================
 # Folder removal
 # ===========================================================================
+function Test-IsLink($Item) {
+    return [bool]($Item -and ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+        ($Item.LinkType -eq 'Junction' -or $Item.LinkType -eq 'SymbolicLink'))
+}
+
+# Removes junctions and symbolic links below $Path as links. takeown /r, icacls /t and
+# robocopy /MIR work through a link, so what a link points to would be changed or deleted too.
+function Remove-LinksBelow([string]$Path) {
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue |
+        Where-Object { Test-IsLink $_ } | ForEach-Object {
+            try { if ($_.PSIsContainer) { [IO.Directory]::Delete($_.FullName, $false) } else { [IO.File]::Delete($_.FullName) } } catch { }
+        }
+}
+
 function Remove-FolderHard([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return }
 
+    # 0. Links: a folder that is itself a junction or symbolic link is removed as a link, its target is left alone
+    if (Test-IsLink (Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) {
+        try { [IO.Directory]::Delete($Path, $false); Write-Done "removed link $Path (its target was not touched)" }
+        catch { Write-Fail "$Path (link): $($_.Exception.Message)" }
+        return
+    }
+    Remove-LinksBelow $Path
+
     # 1. Ownership and permissions
-    if ($script:YesLetter) { & takeown.exe /f $Path /r /a /d $script:YesLetter 2>&1 | Out-Null }
+    if ($script:YesLetter) { & takeown.exe /f $Path /r /skipsl /a /d $script:YesLetter 2>&1 | Out-Null }
     else                   { & takeown.exe /f $Path /a 2>&1 | Out-Null }
     & icacls.exe $Path /grant '*S-1-5-32-544:F' /t /c /q 2>&1 | Out-Null   # Administrators, by SID
     Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {
@@ -394,6 +416,7 @@ function Remove-FolderHard([string]$Path) {
 
     # 3. Long paths: mirror an empty folder over it
     if (Test-Path -LiteralPath $Path) {
+        Remove-LinksBelow $Path
         $empty = Join-Path $env:TEMP ('adobe-nuke-empty-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $empty -Force | Out-Null
         & robocopy.exe $empty $Path /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS /NP 2>&1 | Out-Null
@@ -604,7 +627,14 @@ foreach ($f in $folders) {
     Get-ChildItem -LiteralPath $f -Recurse -Force -File -Include '*Shell*Ext*.dll', 'CoreSync*.dll', '*ContextMenu*.dll' -ErrorAction SilentlyContinue |
         ForEach-Object { $dllList.Add($_.FullName) }
 }
-$shellDlls = @($dllList | Where-Object { $_ -like '*.dll' } | Select-Object -Unique)
+# regsvr32 loads the DLL into this elevated process, so only DLLs under Program Files are accepted:
+# profile folders and ProgramData can be written without administrator rights. DLLs elsewhere are
+# not unregistered; the registry and folder steps remove them.
+$dllRoots = @(@($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') + '\' } | Select-Object -Unique)
+$shellDlls = @($dllList | Where-Object { $_ -like '*.dll' } | Select-Object -Unique | Where-Object {
+    $dll = $_
+    @($dllRoots | Where-Object { $dll.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+})
 
 # ---- Shortcuts
 $wsh = New-Object -ComObject WScript.Shell
@@ -649,7 +679,7 @@ foreach ($e in $uninstallEntries) {
     if ($pc) { [void]$packedCodes.Add($pc) }
 }
 foreach ($pc in Get-RegSubKeys 'HKLM' 'SOFTWARE\Classes\Installer\Products') {
-    if ((Get-RegString 'HKLM' "SOFTWARE\Classes\Installer\Products\$pc" 'ProductName') -match '^Adobe|Acrobat') { [void]$packedCodes.Add($pc) }
+    if ((Get-RegString 'HKLM' "SOFTWARE\Classes\Installer\Products\$pc" 'ProductName') -match '^(Adobe|Acrobat)') { [void]$packedCodes.Add($pc) }
 }
 foreach ($pc in Get-RegSubKeys 'HKLM' $udProducts) {
     if ((Get-RegString 'HKLM' "$udProducts\$pc\InstallProperties" 'Publisher') -match '^Adobe') { [void]$packedCodes.Add($pc) }
@@ -686,7 +716,7 @@ if (-not $SkipCache) {
                 $author  = [string]$si.GetType().InvokeMember('Property', 'GetProperty', $null, $si, @(4))
                 $subject = [string]$si.GetType().InvokeMember('Property', 'GetProperty', $null, $si, @(3))
                 [void][Runtime.InteropServices.Marshal]::ReleaseComObject($si)
-                if ($author -match 'Adobe' -or $subject -match '^Adobe|Acrobat') { [void]$msiSet.Add($_.FullName) }
+                if ($author -match '^Adobe' -or $subject -match '^(Adobe|Acrobat)') { [void]$msiSet.Add($_.FullName) }
             } catch { }
         }
         [void][Runtime.InteropServices.Marshal]::ReleaseComObject($msi)
@@ -702,14 +732,14 @@ if (-not $SkipCache) {
     foreach ($p in $profiles) { $tempDirs += (Join-Path $p 'AppData\Local\Temp') }
     foreach ($t in ($tempDirs | Where-Object { Test-Path -LiteralPath $_ })) {
         Get-ChildItem -LiteralPath $t -Force -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^(Adobe|Acro|CreativeCloud|Creative Cloud|CoreSync|CCX|PDApp|AAMUpdater|AdobeGC|CEP)' } |
+            Where-Object { $_.Name -match '^(Adobe|Acro(?!nis)|CreativeCloud|Creative Cloud|CoreSync|CCX(Process|Welcome|[ _.-])|PDApp|AAMUpdater|AdobeGC|CEP(Html|[0-9 _.-]))' } |
             ForEach-Object { if ($_.PSIsContainer) { $cacheDirs.Add($_.FullName) } else { $cacheFiles.Add($_.FullName) } }
     }
 
     # Prefetch
     $prefetch = Join-Path $env:windir 'Prefetch'
     Get-ChildItem -LiteralPath $prefetch -Filter '*.pf' -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^(ADOBE|ACRO|CREATIVE CLOUD|CCXPROCESS|CCLIBRARY|CORESYNC|AGSSERVICE|AGMSERVICE|ARMSVC|PHOTOSHOP|ILLUSTRATOR|AFTERFX|INDESIGN|LIGHTROOM|AUDITION|ANIMATE|DREAMWEAVER|PDAPP)' } |
+        Where-Object { $_.Name -match '^(ADOBE|ACRO(?!NIS)|CREATIVE CLOUD|CCXPROCESS|CCLIBRARY|CORESYNC|AGSSERVICE|AGMSERVICE|ARMSVC|PHOTOSHOP|ILLUSTRATOR|AFTERFX|INDESIGN|LIGHTROOM|AUDITION|ANIMATE|DREAMWEAVER|PDAPP)' } |
         ForEach-Object { $cacheFiles.Add($_.FullName) }
 }
 $cacheBytes = 0
@@ -747,7 +777,7 @@ if (-not $SkipRegistry) {
                     # not a product, so it is judged per value and never learned as a code.
                     if ($n -eq $zeroCode) { $zeroAdobe = $true; continue }
                     $pn = Get-RegString 'HKLM' "SOFTWARE\Classes\Installer\Products\$n" 'ProductName'
-                    if (-not $pn -or $pn -match '^Adobe|Acrobat') { [void]$compCodes.Add($n) } else { [void]$notAdobe.Add($n) }
+                    if (-not $pn -or $pn -match '^(Adobe|Acrobat)') { [void]$compCodes.Add($n) } else { [void]$notAdobe.Add($n) }
                 }
             }
             $compData.Add([pscustomobject]@{ Key = $ck; Names = $names; Subs = $k.GetSubKeyNames(); ZeroAdobe = $zeroAdobe })
